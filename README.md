@@ -36,3 +36,45 @@ Go service that syncs mTLS certificates from SAP BTP Destination Service to matc
 ```bash
 go run ./cmd/btp-mtls-sync
 ```
+
+## Deploy to SAP BTP Cloud Foundry
+
+1. Log in to your SAP BTP Cloud Foundry org/space and target the space:
+
+   ```bash
+   cf login -a https://api.cf.<region>.hana.ondemand.com
+   cf target -o <org> -s <space>
+   ```
+
+2. Set the required environment variables on the app (values from your Destination Service and CF API credentials):
+
+   ```bash
+   cf set-env btp-mtls-sync DESTINATION_TOKEN_URL <value>
+   cf set-env btp-mtls-sync DESTINATION_CLIENT_ID <value>
+   cf set-env btp-mtls-sync DESTINATION_CLIENT_SECRET <value>
+   cf set-env btp-mtls-sync DESTINATION_API_URL <value>
+   cf set-env btp-mtls-sync CF_TOKEN_URL <value>
+   cf set-env btp-mtls-sync CF_CLIENT_ID <value>
+   cf set-env btp-mtls-sync CF_CLIENT_SECRET <value>
+   cf set-env btp-mtls-sync CF_API_URL <value>
+   cf set-env btp-mtls-sync CF_DEFAULT_SERVICE_INSTANCE_GUID <value>
+   ```
+
+3. (Optional) Set optional sync flags:
+
+   ```bash
+   cf set-env btp-mtls-sync SYNC_NAME_PREFIX <prefix>
+   cf set-env btp-mtls-sync DRY_RUN true
+   ```
+
+4. Push the app with the Go buildpack:
+
+   ```bash
+   cf push btp-mtls-sync -b go_buildpack
+   ```
+
+5. Restage or restart after changing environment variables:
+
+   ```bash
+   cf restart btp-mtls-sync
+   ```
