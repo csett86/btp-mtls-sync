@@ -152,19 +152,22 @@ func loadConfig() (config, error) {
 	}
 
 	missing := []string{}
-	required := map[string]string{
-		"DESTINATION_TOKEN_URL":     cfg.DestinationTokenURL,
-		"DESTINATION_CLIENT_ID":     cfg.DestinationClientID,
-		"DESTINATION_CLIENT_SECRET": cfg.DestinationClientSecret,
-		"DESTINATION_API_URL":       cfg.DestinationAPIURL,
-		"CF_API_URL":                cfg.CFAPIURL,
-		"CF_TOKEN_URL":              cfg.CFTokenURL,
-		"CF_CLIENT_ID":              cfg.CFClientID,
-		"CF_CLIENT_SECRET":          cfg.CFClientSecret,
+	required := []struct {
+		key   string
+		value string
+	}{
+		{key: "DESTINATION_TOKEN_URL", value: cfg.DestinationTokenURL},
+		{key: "DESTINATION_CLIENT_ID", value: cfg.DestinationClientID},
+		{key: "DESTINATION_CLIENT_SECRET", value: cfg.DestinationClientSecret},
+		{key: "DESTINATION_API_URL", value: cfg.DestinationAPIURL},
+		{key: "CF_API_URL", value: cfg.CFAPIURL},
+		{key: "CF_TOKEN_URL", value: cfg.CFTokenURL},
+		{key: "CF_CLIENT_ID", value: cfg.CFClientID},
+		{key: "CF_CLIENT_SECRET", value: cfg.CFClientSecret},
 	}
-	for key, value := range required {
-		if value == "" {
-			missing = append(missing, key)
+	for _, requiredVar := range required {
+		if requiredVar.value == "" {
+			missing = append(missing, requiredVar.key)
 		}
 	}
 	if len(missing) > 0 {
@@ -254,7 +257,7 @@ func normalizeCertificates(entries []map[string]any) []destinationCertificate {
 			Certificate: getFirstString(item, "certificate", "content", "cert", "clientcert", "pem"),
 			Key:         getFirstString(item, "key", "privateKey", "private_key", "clientkey"),
 		}
-		if cert.Name == "" {
+		if cert.Name == "" || cert.Certificate == "" || cert.Key == "" {
 			continue
 		}
 		certs = append(certs, cert)
@@ -329,31 +332,41 @@ func syncCertificates(
 	}
 
 	for _, cert := range certificates {
+		targetName := cert.Name
 		if cfg.NamePrefix != "" && !strings.HasPrefix(cert.Name, cfg.NamePrefix) {
 			continue
 		}
+		if cfg.NamePrefix != "" {
+			targetName = strings.TrimPrefix(cert.Name, cfg.NamePrefix)
+			targetName = strings.TrimSpace(targetName)
+			if targetName == "" {
+				skipped++
+				log.Printf("skip %q (empty target key name after prefix trim)", cert.Name)
+				continue
+			}
+		}
 
 		fingerprint := certificateFingerprint(cert)
-		key, found := keysByName[cert.Name]
+		key, found := keysByName[targetName]
 		if found {
 			if key.Metadata.Annotations != nil && key.Metadata.Annotations[annotationFingerprint] == fingerprint {
 				skipped++
-				log.Printf("skip %q (fingerprint unchanged)", cert.Name)
+				log.Printf("skip %q (fingerprint unchanged)", targetName)
 				continue
 			}
 			if key.Relationships.ServiceInstance.Data == nil || strings.TrimSpace(key.Relationships.ServiceInstance.Data.GUID) == "" {
 				skipped++
-				log.Printf("skip %q (existing key has no managed service instance GUID)", cert.Name)
+				log.Printf("skip %q (existing key has no managed service instance GUID)", targetName)
 				continue
 			}
 
-			log.Printf("update %q (recreate existing service key)", cert.Name)
+			log.Printf("update %q (recreate existing service key)", targetName)
 			if !cfg.DryRun {
 				if err := deleteServiceKey(ctx, client, cfg.CFAPIURL, cfToken, key.GUID); err != nil {
-					return created, updated, skipped, fmt.Errorf("delete service key %q: %w", cert.Name, err)
+					return created, updated, skipped, fmt.Errorf("delete service key %q: %w", targetName, err)
 				}
-				if err := createServiceKey(ctx, client, cfg.CFAPIURL, cfToken, cert.Name, key.Relationships.ServiceInstance.Data.GUID, cert, fingerprint); err != nil {
-					return created, updated, skipped, fmt.Errorf("recreate service key %q: %w", cert.Name, err)
+				if err := createServiceKey(ctx, client, cfg.CFAPIURL, cfToken, targetName, key.Relationships.ServiceInstance.Data.GUID, cert, fingerprint); err != nil {
+					return created, updated, skipped, fmt.Errorf("recreate service key %q: %w", targetName, err)
 				}
 			}
 			updated++
@@ -362,14 +375,14 @@ func syncCertificates(
 
 		if cfg.CFDefaultServiceInstance == "" {
 			skipped++
-			log.Printf("skip %q (no existing matching service key and CF_DEFAULT_SERVICE_INSTANCE_GUID not set)", cert.Name)
+			log.Printf("skip %q (no existing matching service key and CF_DEFAULT_SERVICE_INSTANCE_GUID not set)", targetName)
 			continue
 		}
 
-		log.Printf("create %q", cert.Name)
+		log.Printf("create %q", targetName)
 		if !cfg.DryRun {
-			if err := createServiceKey(ctx, client, cfg.CFAPIURL, cfToken, cert.Name, cfg.CFDefaultServiceInstance, cert, fingerprint); err != nil {
-				return created, updated, skipped, fmt.Errorf("create service key %q: %w", cert.Name, err)
+			if err := createServiceKey(ctx, client, cfg.CFAPIURL, cfToken, targetName, cfg.CFDefaultServiceInstance, cert, fingerprint); err != nil {
+				return created, updated, skipped, fmt.Errorf("create service key %q: %w", targetName, err)
 			}
 		}
 		created++
