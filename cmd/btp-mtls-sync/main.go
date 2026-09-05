@@ -57,7 +57,7 @@ type cfServiceKeyResource struct {
 	Type          string `json:"type"`
 	Relationships struct {
 		ServiceInstance struct {
-			Data cfRelationshipData `json:"data"`
+			Data *cfRelationshipData `json:"data"`
 		} `json:"service_instance"`
 	} `json:"relationships"`
 	Metadata struct {
@@ -74,6 +74,14 @@ type cfPagination struct {
 type cfServiceKeyListResponse struct {
 	Resources  []cfServiceKeyResource `json:"resources"`
 	Pagination cfPagination           `json:"pagination"`
+}
+
+type cfJob struct {
+	State  string `json:"state"`
+	Errors []struct {
+		Detail string `json:"detail"`
+		Title  string `json:"title"`
+	} `json:"errors"`
 }
 
 func main() {
@@ -314,6 +322,9 @@ func syncCertificates(
 ) (created int, updated int, skipped int, err error) {
 	keysByName := make(map[string]cfServiceKeyResource, len(serviceKeys))
 	for _, key := range serviceKeys {
+		if _, exists := keysByName[key.Name]; exists {
+			return created, updated, skipped, fmt.Errorf("multiple CF service keys found with name %q", key.Name)
+		}
 		keysByName[key.Name] = key
 	}
 
@@ -328,6 +339,11 @@ func syncCertificates(
 			if key.Metadata.Annotations != nil && key.Metadata.Annotations[annotationFingerprint] == fingerprint {
 				skipped++
 				log.Printf("skip %q (fingerprint unchanged)", cert.Name)
+				continue
+			}
+			if key.Relationships.ServiceInstance.Data == nil || strings.TrimSpace(key.Relationships.ServiceInstance.Data.GUID) == "" {
+				skipped++
+				log.Printf("skip %q (existing key has no managed service instance GUID)", cert.Name)
 				continue
 			}
 
@@ -414,6 +430,11 @@ func createServiceKey(
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		return fmt.Errorf("create service key status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+	if resp.StatusCode == http.StatusAccepted {
+		if err := waitForCFJob(ctx, client, apiURL, token, resp.Header.Get("Location")); err != nil {
+			return fmt.Errorf("create service key async job failed: %w", err)
+		}
+	}
 
 	return nil
 }
@@ -435,7 +456,68 @@ func deleteServiceKey(ctx context.Context, client *http.Client, apiURL string, t
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
 		return fmt.Errorf("delete service key status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
+	if resp.StatusCode == http.StatusAccepted {
+		if err := waitForCFJob(ctx, client, apiURL, token, resp.Header.Get("Location")); err != nil {
+			return fmt.Errorf("delete service key async job failed: %w", err)
+		}
+	}
 	return nil
+}
+
+func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token string, location string) error {
+	jobURL := strings.TrimSpace(location)
+	if jobURL == "" {
+		return errors.New("missing CF job location header")
+	}
+	if strings.HasPrefix(jobURL, "/") {
+		jobURL = strings.TrimRight(apiURL, "/") + jobURL
+	}
+
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		if time.Now().After(deadline) {
+			return errors.New("timed out waiting for CF async job")
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, jobURL, nil)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+			resp.Body.Close()
+			return fmt.Errorf("job status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		}
+
+		var job cfJob
+		decodeErr := json.NewDecoder(resp.Body).Decode(&job)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return decodeErr
+		}
+
+		switch strings.ToUpper(strings.TrimSpace(job.State)) {
+		case "COMPLETE":
+			return nil
+		case "FAILED":
+			if len(job.Errors) > 0 {
+				return fmt.Errorf("%s: %s", strings.TrimSpace(job.Errors[0].Title), strings.TrimSpace(job.Errors[0].Detail))
+			}
+			return errors.New("job failed")
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(2 * time.Second):
+		}
+	}
 }
 
 func certificateFingerprint(cert destinationCertificate) string {
