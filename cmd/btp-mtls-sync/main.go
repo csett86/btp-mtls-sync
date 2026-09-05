@@ -450,9 +450,10 @@ func createServiceKey(
 			},
 		},
 		"parameters": map[string]any{
-			"certificate": cert.Certificate,
-			"key":         cert.Key,
-			"name":        cert.Name,
+			"certificate":         cert.Certificate,
+			"key":                 cert.Key,
+			"name":                cert.Name,
+			"certificate_pinning": false,
 		},
 		"metadata": map[string]any{
 			"annotations": map[string]string{

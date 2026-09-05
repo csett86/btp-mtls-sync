@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -162,5 +164,52 @@ func TestWaitForCFJobRejectsCrossOriginLocation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "host does not match CF API host") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestCreateServiceKeyDisablesCertificatePinning(t *testing.T) {
+	var captured map[string]any
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/service_credential_bindings" {
+			http.NotFound(w, r)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		if err := json.Unmarshal(body, &captured); err != nil {
+			t.Fatalf("unmarshal request body: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	err := createServiceKey(
+		context.Background(),
+		server.Client(),
+		server.URL,
+		"token",
+		"key-name",
+		"instance-guid",
+		destinationCertificate{Name: "cert-a", Certificate: "CERT", Key: "KEY"},
+		"fingerprint",
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+
+	parameters, ok := captured["parameters"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected parameters object, got %#v", captured["parameters"])
+	}
+
+	certificatePinning, ok := parameters["certificate_pinning"].(bool)
+	if !ok {
+		t.Fatalf("expected certificate_pinning bool, got %#v", parameters["certificate_pinning"])
+	}
+	if certificatePinning {
+		t.Fatal("expected certificate_pinning to be false")
 	}
 }
