@@ -42,3 +42,36 @@ func TestCertificateFingerprintIgnoresName(t *testing.T) {
 		t.Fatal("expected fingerprint to stay the same when only name changes")
 	}
 }
+
+func TestParseDestinationCertificatesWrappedEmpty(t *testing.T) {
+	certs, err := parseDestinationCertificates([]byte(`{"certificates":[]}`))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(certs) != 0 {
+		t.Fatalf("expected zero certificates, got %d", len(certs))
+	}
+}
+
+func TestParseDestinationCertificatesNormalizesAndFilters(t *testing.T) {
+	payload := []byte(`[
+		{"name":"a","certificate":"CERT-A","key":"KEY-A"},
+		{"Name":"b","clientcert":"CERT-B","clientkey":"KEY-B"},
+		{"name":"missing-cert","key":"KEY"},
+		{"certificate":"CERT-NO-NAME","key":"KEY-NO-NAME"}
+	]`)
+
+	certs, err := parseDestinationCertificates(payload)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(certs) != 2 {
+		t.Fatalf("expected 2 certificates, got %d", len(certs))
+	}
+	if certs[0].Name != "a" || certs[0].Certificate != "CERT-A" || certs[0].Key != "KEY-A" {
+		t.Fatalf("unexpected first certificate: %+v", certs[0])
+	}
+	if certs[1].Name != "b" || certs[1].Certificate != "CERT-B" || certs[1].Key != "KEY-B" {
+		t.Fatalf("unexpected second certificate: %+v", certs[1])
+	}
+}

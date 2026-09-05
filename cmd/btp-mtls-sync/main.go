@@ -232,14 +232,23 @@ func listDestinationCertificates(ctx context.Context, client *http.Client, apiUR
 	if err != nil {
 		return nil, err
 	}
+	return parseDestinationCertificates(payload)
+}
 
+func parseDestinationCertificates(payload []byte) ([]destinationCertificate, error) {
 	type wrapped struct {
 		Certificates []map[string]any `json:"certificates"`
 	}
 
-	wrappedResp := wrapped{}
-	if err := json.Unmarshal(payload, &wrappedResp); err == nil && len(wrappedResp.Certificates) > 0 {
-		return normalizeCertificates(wrappedResp.Certificates), nil
+	var objectProbe map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &objectProbe); err == nil {
+		if rawCerts, ok := objectProbe["certificates"]; ok {
+			wrappedResp := wrapped{}
+			if err := json.Unmarshal(rawCerts, &wrappedResp.Certificates); err != nil {
+				return nil, fmt.Errorf("decode destination certificates wrapper: %w", err)
+			}
+			return normalizeCertificates(wrappedResp.Certificates), nil
+		}
 	}
 
 	arrayResp := []map[string]any{}
@@ -353,6 +362,15 @@ func syncCertificates(
 			if key.Metadata.Annotations != nil && key.Metadata.Annotations[annotationFingerprint] == fingerprint {
 				skipped++
 				log.Printf("skip %q (fingerprint unchanged)", targetName)
+				continue
+			}
+			matches, err := existingServiceKeyMatchesCertificate(ctx, client, cfg.CFAPIURL, cfToken, key.GUID, cert)
+			if err != nil {
+				return created, updated, skipped, fmt.Errorf("inspect existing service key %q: %w", targetName, err)
+			}
+			if matches {
+				skipped++
+				log.Printf("skip %q (existing key material already matches)", targetName)
 				continue
 			}
 			if key.Relationships.ServiceInstance.Data == nil || strings.TrimSpace(key.Relationships.ServiceInstance.Data.GUID) == "" {
@@ -476,6 +494,43 @@ func deleteServiceKey(ctx context.Context, client *http.Client, apiURL string, t
 		}
 	}
 	return nil
+}
+
+func existingServiceKeyMatchesCertificate(
+	ctx context.Context,
+	client *http.Client,
+	apiURL string,
+	token string,
+	serviceKeyGUID string,
+	cert destinationCertificate,
+) (bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL+"/v3/service_credential_bindings/"+serviceKeyGUID+"/details", nil)
+	if err != nil {
+		return false, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return false, fmt.Errorf("service key details status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var details struct {
+		Credentials map[string]any `json:"credentials"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return false, err
+	}
+
+	existingCert := getFirstString(details.Credentials, "certificate", "content", "cert", "clientcert", "pem")
+	existingKey := getFirstString(details.Credentials, "key", "privateKey", "private_key", "clientkey")
+	return existingCert == cert.Certificate && existingKey == cert.Key, nil
 }
 
 func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token string, location string) error {
