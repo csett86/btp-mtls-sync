@@ -334,6 +334,7 @@ func syncCertificates(
 	for _, cert := range certificates {
 		targetName := cert.Name
 		if cfg.NamePrefix != "" && !strings.HasPrefix(cert.Name, cfg.NamePrefix) {
+			skipped++
 			continue
 		}
 		if cfg.NamePrefix != "" {

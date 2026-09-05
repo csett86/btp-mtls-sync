@@ -33,3 +33,12 @@ func TestCertificateFingerprintChangesWithKey(t *testing.T) {
 		t.Fatal("expected fingerprint to change when key changes")
 	}
 }
+
+func TestCertificateFingerprintIgnoresName(t *testing.T) {
+	base := destinationCertificate{Name: "cert-a", Certificate: "CERTDATA", Key: "KEYDATA"}
+	renamed := destinationCertificate{Name: "cert-b", Certificate: "CERTDATA", Key: "KEYDATA"}
+
+	if certificateFingerprint(base) != certificateFingerprint(renamed) {
+		t.Fatal("expected fingerprint to stay the same when only name changes")
+	}
+}
