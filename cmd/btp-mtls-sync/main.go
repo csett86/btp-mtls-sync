@@ -346,6 +346,7 @@ func syncCertificates(
 		}
 		keysByName[key.Name] = key
 	}
+	seenTargetNames := map[string]struct{}{}
 
 	for _, cert := range certificates {
 		targetName := cert.Name
@@ -362,6 +363,10 @@ func syncCertificates(
 				continue
 			}
 		}
+		if _, exists := seenTargetNames[targetName]; exists {
+			return created, updated, skipped, fmt.Errorf("multiple certificates resolve to target key name %q", targetName)
+		}
+		seenTargetNames[targetName] = struct{}{}
 
 		fingerprint := certificateFingerprint(cert)
 		key, found := keysByName[targetName]
@@ -377,6 +382,11 @@ func syncCertificates(
 			}
 			if matches {
 				skipped++
+				if !cfg.DryRun {
+					if err := updateServiceKeyAnnotations(ctx, client, cfg.CFAPIURL, cfToken, key.GUID, fingerprint); err != nil {
+						return created, updated, skipped, fmt.Errorf("update service key annotations %q: %w", targetName, err)
+					}
+				}
 				log.Printf("skip %q (existing key material already matches)", targetName)
 				continue
 			}
@@ -543,6 +553,17 @@ func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token
 			return fmt.Errorf("invalid CF API URL: %w", err)
 		}
 		jobURL = baseURI.ResolveReference(jobURI).String()
+		jobURI, err = url.Parse(jobURL)
+		if err != nil {
+			return fmt.Errorf("invalid resolved job URL: %w", err)
+		}
+	}
+	baseURI, err := url.Parse(strings.TrimRight(apiURL, "/"))
+	if err != nil {
+		return fmt.Errorf("invalid CF API URL: %w", err)
+	}
+	if !sameOrigin(baseURI, jobURI) {
+		return errors.New("job location host does not match CF API host")
 	}
 
 	deadline := time.Now().Add(2 * time.Minute)
@@ -590,6 +611,44 @@ func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+}
+
+func updateServiceKeyAnnotations(ctx context.Context, client *http.Client, apiURL string, token string, guid string, fingerprint string) error {
+	payload := map[string]any{
+		"metadata": map[string]any{
+			"annotations": map[string]string{
+				annotationFingerprint: fingerprint,
+				annotationSyncedAt:    time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, apiURL+"/v3/service_credential_bindings/"+guid, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 8192))
+		return fmt.Errorf("patch annotations status %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	return nil
 }
 
 func certificateFingerprint(cert destinationCertificate) string {

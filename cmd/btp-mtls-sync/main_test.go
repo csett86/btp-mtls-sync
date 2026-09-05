@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestCertificateFingerprintStable(t *testing.T) {
 	cert := destinationCertificate{Name: "cert-a", Certificate: "CERTDATA", Key: "KEYDATA"}
@@ -93,5 +99,26 @@ func TestParseDestinationCertificatesInvalidWrappedValue(t *testing.T) {
 	_, err := parseDestinationCertificates([]byte(`{"certificates":"invalid"}`))
 	if err == nil {
 		t.Fatal("expected an error for invalid wrapped certificate payload")
+	}
+}
+
+func TestSyncCertificatesDetectsTargetNameCollisionAfterPrefixTrim(t *testing.T) {
+	cfg := config{
+		CFDefaultServiceInstance: "service-instance-guid",
+		NamePrefix:               "pre-",
+		DryRun:                   true,
+	}
+	client := &http.Client{Timeout: 1 * time.Second}
+	certs := []destinationCertificate{
+		{Name: "pre-a", Certificate: "CERT-A", Key: "KEY-A"},
+		{Name: "pre- a", Certificate: "CERT-B", Key: "KEY-B"},
+	}
+
+	_, _, _, err := syncCertificates(context.Background(), client, cfg, "token", certs, nil)
+	if err == nil {
+		t.Fatal("expected collision error")
+	}
+	if !strings.Contains(err.Error(), "multiple certificates resolve to target key name") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
