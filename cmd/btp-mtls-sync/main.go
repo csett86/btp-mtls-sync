@@ -550,6 +550,10 @@ func existingServiceKeyMatchesCertificate(
 	}
 
 	existingCert := getFirstString(details.Credentials, "certificate", "X.509", "content", "cert", "clientcert", "pem")
+	existingKey := getFirstString(details.Credentials, "key", "privateKey", "private_key", "clientkey")
+	if existingKey != "" {
+		return false, nil
+	}
 	return existingCert == cert.Certificate, nil
 }
 

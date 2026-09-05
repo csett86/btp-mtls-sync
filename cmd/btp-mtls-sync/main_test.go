@@ -260,3 +260,30 @@ func TestExistingServiceKeyMatchesCertificateWithoutPrivateKey(t *testing.T) {
 		t.Fatal("expected certificate-only service key details to match")
 	}
 }
+
+func TestExistingServiceKeyWithPrivateKeyDoesNotMatchExternalCertificateMode(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/service_credential_bindings/binding-guid/details" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"credentials":{"certificate":"CERT","key":"PRIVATE"}}`))
+	}))
+	defer server.Close()
+
+	matches, err := existingServiceKeyMatchesCertificate(
+		context.Background(),
+		server.Client(),
+		server.URL,
+		"token",
+		"binding-guid",
+		destinationCertificate{Name: "cert-a", Certificate: "CERT", Key: "IGNORED"},
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if matches {
+		t.Fatal("expected legacy key-pair credentials to be recreated in external-certificate mode")
+	}
+}
