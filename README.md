@@ -1,5 +1,7 @@
 # btp-mtls-sync
 
+> **Note:** This project was created with GitHub Copilot.
+
 Go service that syncs mTLS certificates from SAP BTP Destination Service to matching Cloud Foundry service keys (1:1 by name).
 
 ## Behavior
