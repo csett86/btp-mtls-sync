@@ -35,12 +35,12 @@ func TestCertificateFingerprintChangesWithCertificate(t *testing.T) {
 	}
 }
 
-func TestCertificateFingerprintChangesWithKey(t *testing.T) {
+func TestCertificateFingerprintIgnoresKey(t *testing.T) {
 	base := destinationCertificate{Name: "cert-a", Certificate: "CERTDATA", Key: "KEYDATA"}
 	changed := destinationCertificate{Name: "cert-a", Certificate: "CERTDATA", Key: "KEYDATA-NEW"}
 
-	if certificateFingerprint(base) == certificateFingerprint(changed) {
-		t.Fatal("expected fingerprint to change when key changes")
+	if certificateFingerprint(base) != certificateFingerprint(changed) {
+		t.Fatal("expected fingerprint to stay the same when only key changes")
 	}
 }
 
@@ -205,11 +205,58 @@ func TestCreateServiceKeyDisablesCertificatePinning(t *testing.T) {
 		t.Fatalf("expected parameters object, got %#v", captured["parameters"])
 	}
 
+	keyType, ok := parameters["key-type"].(string)
+	if !ok {
+		t.Fatalf("expected key-type string, got %#v", parameters["key-type"])
+	}
+	if keyType != "certificate_external" {
+		t.Fatalf("expected key-type certificate_external, got %q", keyType)
+	}
+
+	x509, ok := parameters["X.509"].(string)
+	if !ok {
+		t.Fatalf("expected X.509 string, got %#v", parameters["X.509"])
+	}
+	if x509 != "CERT" {
+		t.Fatalf("expected X.509 certificate payload, got %q", x509)
+	}
+
+	if _, exists := parameters["key"]; exists {
+		t.Fatalf("expected no private key in external certificate payload, got %#v", parameters["key"])
+	}
+
 	certificatePinning, ok := parameters["certificate_pinning"].(bool)
 	if !ok {
 		t.Fatalf("expected certificate_pinning bool, got %#v", parameters["certificate_pinning"])
 	}
 	if certificatePinning {
 		t.Fatal("expected certificate_pinning to be false")
+	}
+}
+
+func TestExistingServiceKeyMatchesCertificateWithoutPrivateKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/service_credential_bindings/binding-guid/details" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"credentials":{"certificate":"CERT"}}`))
+	}))
+	defer server.Close()
+
+	matches, err := existingServiceKeyMatchesCertificate(
+		context.Background(),
+		server.Client(),
+		server.URL,
+		"token",
+		"binding-guid",
+		destinationCertificate{Name: "cert-a", Certificate: "CERT", Key: "IGNORED"},
+	)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !matches {
+		t.Fatal("expected certificate-only service key details to match")
 	}
 }
