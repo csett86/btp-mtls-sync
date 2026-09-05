@@ -383,7 +383,7 @@ func syncCertificates(
 			if matches {
 				skipped++
 				if !cfg.DryRun {
-					if err := updateServiceKeyAnnotations(ctx, client, cfg.CFAPIURL, cfToken, key.GUID, fingerprint); err != nil {
+					if err := updateServiceKeyAnnotations(ctx, client, cfg.CFAPIURL, cfToken, key.GUID, key.Metadata.Annotations, fingerprint); err != nil {
 						return created, updated, skipped, fmt.Errorf("update service key annotations %q: %w", targetName, err)
 					}
 				}
@@ -614,16 +614,44 @@ func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token
 }
 
 func sameOrigin(a, b *url.URL) bool {
-	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Host, b.Host)
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		effectivePort(a) == effectivePort(b)
 }
 
-func updateServiceKeyAnnotations(ctx context.Context, client *http.Client, apiURL string, token string, guid string, fingerprint string) error {
+func effectivePort(uri *url.URL) string {
+	if uri.Port() != "" {
+		return uri.Port()
+	}
+	switch strings.ToLower(uri.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+func updateServiceKeyAnnotations(
+	ctx context.Context,
+	client *http.Client,
+	apiURL string,
+	token string,
+	guid string,
+	existing map[string]string,
+	fingerprint string,
+) error {
+	annotations := map[string]string{}
+	for key, value := range existing {
+		annotations[key] = value
+	}
+	annotations[annotationFingerprint] = fingerprint
+	annotations[annotationSyncedAt] = time.Now().UTC().Format(time.RFC3339)
+
 	payload := map[string]any{
 		"metadata": map[string]any{
-			"annotations": map[string]string{
-				annotationFingerprint: fingerprint,
-				annotationSyncedAt:    time.Now().UTC().Format(time.RFC3339),
-			},
+			"annotations": annotations,
 		},
 	}
 	body, err := json.Marshal(payload)

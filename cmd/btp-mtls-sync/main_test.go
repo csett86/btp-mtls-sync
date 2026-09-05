@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +121,46 @@ func TestSyncCertificatesDetectsTargetNameCollisionAfterPrefixTrim(t *testing.T)
 		t.Fatal("expected collision error")
 	}
 	if !strings.Contains(err.Error(), "multiple certificates resolve to target key name") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestSameOriginTreatsDefaultHttpsPortAsEquivalent(t *testing.T) {
+	a, _ := url.Parse("https://api.example.com")
+	b, _ := url.Parse("https://api.example.com:443")
+	if !sameOrigin(a, b) {
+		t.Fatal("expected same origin with implicit and explicit default HTTPS port")
+	}
+}
+
+func TestWaitForCFJobResolvesRelativeLocation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/jobs/abc" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"state":"COMPLETE"}`))
+	}))
+	defer server.Close()
+
+	err := waitForCFJob(context.Background(), server.Client(), server.URL, "token", "/v3/jobs/abc")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+func TestWaitForCFJobRejectsCrossOriginLocation(t *testing.T) {
+	serverA := httptest.NewServer(http.NotFoundHandler())
+	defer serverA.Close()
+	serverB := httptest.NewServer(http.NotFoundHandler())
+	defer serverB.Close()
+
+	err := waitForCFJob(context.Background(), serverA.Client(), serverA.URL, "token", serverB.URL+"/v3/jobs/abc")
+	if err == nil {
+		t.Fatal("expected cross-origin rejection")
+	}
+	if !strings.Contains(err.Error(), "host does not match CF API host") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
