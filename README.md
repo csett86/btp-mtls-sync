@@ -7,6 +7,7 @@ Go service that syncs mTLS certificates from SAP BTP Destination Service to matc
 - Reads all certificates from SAP BTP Destination Service.
 - Finds CF service keys with matching names (or matching names after `SYNC_NAME_PREFIX` is trimmed from the certificate name).
 - Recreates a matching CF service key when the certificate fingerprint changed.
+- If fingerprint metadata is stale but key material already matches, it refreshes only sync annotations (no delete/recreate).
 - Update behavior is delete + recreate (service key GUID changes).
 - Optionally creates missing keys in a default service instance (`CF_DEFAULT_SERVICE_INSTANCE_GUID`).
 - Supports dry-run mode.

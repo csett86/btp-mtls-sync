@@ -37,6 +37,22 @@ type config struct {
 	DryRun                   bool
 }
 
+func normalizeTargetName(name string, prefix string) string {
+	normalized := strings.TrimSpace(name)
+	if prefix != "" && strings.HasPrefix(normalized, prefix) {
+		normalized = strings.TrimPrefix(normalized, prefix)
+	}
+	return strings.TrimSpace(normalized)
+}
+
+func resolveCertificateTargetName(name string, prefix string) (target string, include bool) {
+	normalized := strings.TrimSpace(name)
+	if prefix != "" && !strings.HasPrefix(normalized, prefix) {
+		return "", false
+	}
+	return normalizeTargetName(normalized, prefix), true
+}
+
 type tokenResponse struct {
 	AccessToken string `json:"access_token"`
 }
@@ -341,27 +357,27 @@ func syncCertificates(
 		if key.Relationships.ServiceInstance.Data.GUID != cfg.CFDefaultServiceInstance {
 			continue
 		}
-		if _, exists := keysByName[key.Name]; exists {
-			return created, updated, skipped, fmt.Errorf("multiple CF service keys found with name %q", key.Name)
+		normalizedKeyName := normalizeTargetName(key.Name, cfg.NamePrefix)
+		if normalizedKeyName == "" {
+			continue
 		}
-		keysByName[key.Name] = key
+		if _, exists := keysByName[normalizedKeyName]; exists {
+			return created, updated, skipped, fmt.Errorf("multiple CF service keys found with name %q", normalizedKeyName)
+		}
+		keysByName[normalizedKeyName] = key
 	}
 	seenTargetNames := map[string]struct{}{}
 
 	for _, cert := range certificates {
-		targetName := cert.Name
-		if cfg.NamePrefix != "" && !strings.HasPrefix(cert.Name, cfg.NamePrefix) {
+		targetName, include := resolveCertificateTargetName(cert.Name, cfg.NamePrefix)
+		if !include {
 			skipped++
 			continue
 		}
-		if cfg.NamePrefix != "" {
-			targetName = strings.TrimPrefix(cert.Name, cfg.NamePrefix)
-			targetName = strings.TrimSpace(targetName)
-			if targetName == "" {
-				skipped++
-				log.Printf("skip %q (empty target key name after prefix trim)", cert.Name)
-				continue
-			}
+		if targetName == "" {
+			skipped++
+			log.Printf("skip %q (empty target key name after prefix trim)", cert.Name)
+			continue
 		}
 		if _, exists := seenTargetNames[targetName]; exists {
 			return created, updated, skipped, fmt.Errorf("multiple certificates resolve to target key name %q", targetName)
