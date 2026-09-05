@@ -450,9 +450,9 @@ func createServiceKey(
 			},
 		},
 		"parameters": map[string]any{
-			"certificate": cert.Certificate,
-			"key":         cert.Key,
-			"name":        cert.Name,
+			"key-type":            "certificate_external",
+			"X.509":               cert.Certificate,
+			"certificate_pinning": false,
 		},
 		"metadata": map[string]any{
 			"annotations": map[string]string{
@@ -549,9 +549,12 @@ func existingServiceKeyMatchesCertificate(
 		return false, err
 	}
 
-	existingCert := getFirstString(details.Credentials, "certificate", "content", "cert", "clientcert", "pem")
+	existingCert := getFirstString(details.Credentials, "certificate", "X.509", "content", "cert", "clientcert", "pem")
 	existingKey := getFirstString(details.Credentials, "key", "privateKey", "private_key", "clientkey")
-	return existingCert == cert.Certificate && existingKey == cert.Key, nil
+	if existingKey != "" {
+		return false, nil
+	}
+	return existingCert == cert.Certificate, nil
 }
 
 func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token string, location string) error {
@@ -696,6 +699,6 @@ func updateServiceKeyAnnotations(
 }
 
 func certificateFingerprint(cert destinationCertificate) string {
-	hash := sha256.Sum256([]byte(cert.Certificate + "\n" + cert.Key))
+	hash := sha256.Sum256([]byte(cert.Certificate))
 	return hex.EncodeToString(hash[:])
 }
