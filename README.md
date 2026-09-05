@@ -21,10 +21,10 @@ Go service that syncs mTLS certificates from SAP BTP Destination Service to matc
 - `CF_CLIENT_ID`
 - `CF_CLIENT_SECRET`
 - `CF_API_URL`
+- `CF_DEFAULT_SERVICE_INSTANCE_GUID`
 
 ## Optional environment variables
 
-- `CF_DEFAULT_SERVICE_INSTANCE_GUID` - service instance to create missing keys in.
 - `SYNC_NAME_PREFIX` - only sync certificate names that start with this prefix.
 - `DRY_RUN` - `true`/`false`.
 

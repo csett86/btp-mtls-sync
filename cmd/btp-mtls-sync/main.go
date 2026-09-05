@@ -164,6 +164,7 @@ func loadConfig() (config, error) {
 		{key: "CF_TOKEN_URL", value: cfg.CFTokenURL},
 		{key: "CF_CLIENT_ID", value: cfg.CFClientID},
 		{key: "CF_CLIENT_SECRET", value: cfg.CFClientSecret},
+		{key: "CF_DEFAULT_SERVICE_INSTANCE_GUID", value: cfg.CFDefaultServiceInstance},
 	}
 	for _, requiredVar := range required {
 		if requiredVar.value == "" {
@@ -334,6 +335,12 @@ func syncCertificates(
 ) (created int, updated int, skipped int, err error) {
 	keysByName := make(map[string]cfServiceKeyResource, len(serviceKeys))
 	for _, key := range serviceKeys {
+		if key.Relationships.ServiceInstance.Data == nil || strings.TrimSpace(key.Relationships.ServiceInstance.Data.GUID) == "" {
+			continue
+		}
+		if key.Relationships.ServiceInstance.Data.GUID != cfg.CFDefaultServiceInstance {
+			continue
+		}
 		if _, exists := keysByName[key.Name]; exists {
 			return created, updated, skipped, fmt.Errorf("multiple CF service keys found with name %q", key.Name)
 		}
@@ -373,12 +380,6 @@ func syncCertificates(
 				log.Printf("skip %q (existing key material already matches)", targetName)
 				continue
 			}
-			if key.Relationships.ServiceInstance.Data == nil || strings.TrimSpace(key.Relationships.ServiceInstance.Data.GUID) == "" {
-				skipped++
-				log.Printf("skip %q (existing key has no managed service instance GUID)", targetName)
-				continue
-			}
-
 			log.Printf("update %q (recreate existing service key)", targetName)
 			if !cfg.DryRun {
 				if err := deleteServiceKey(ctx, client, cfg.CFAPIURL, cfToken, key.GUID); err != nil {
@@ -389,12 +390,6 @@ func syncCertificates(
 				}
 			}
 			updated++
-			continue
-		}
-
-		if cfg.CFDefaultServiceInstance == "" {
-			skipped++
-			log.Printf("skip %q (no existing matching service key and CF_DEFAULT_SERVICE_INSTANCE_GUID not set)", targetName)
 			continue
 		}
 
@@ -538,8 +533,16 @@ func waitForCFJob(ctx context.Context, client *http.Client, apiURL string, token
 	if jobURL == "" {
 		return errors.New("missing CF job location header")
 	}
-	if strings.HasPrefix(jobURL, "/") {
-		jobURL = strings.TrimRight(apiURL, "/") + jobURL
+	jobURI, err := url.Parse(jobURL)
+	if err != nil {
+		return fmt.Errorf("invalid job location URL: %w", err)
+	}
+	if !jobURI.IsAbs() {
+		baseURI, err := url.Parse(strings.TrimRight(apiURL, "/") + "/")
+		if err != nil {
+			return fmt.Errorf("invalid CF API URL: %w", err)
+		}
+		jobURL = baseURI.ResolveReference(jobURI).String()
 	}
 
 	deadline := time.Now().Add(2 * time.Minute)

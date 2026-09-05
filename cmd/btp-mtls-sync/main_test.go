@@ -53,6 +53,19 @@ func TestParseDestinationCertificatesWrappedEmpty(t *testing.T) {
 	}
 }
 
+func TestParseDestinationCertificatesWrappedNonEmpty(t *testing.T) {
+	certs, err := parseDestinationCertificates([]byte(`{"certificates":[{"name":"a","certificate":"CERT-A","key":"KEY-A"}]}`))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(certs) != 1 {
+		t.Fatalf("expected one certificate, got %d", len(certs))
+	}
+	if certs[0].Name != "a" || certs[0].Certificate != "CERT-A" || certs[0].Key != "KEY-A" {
+		t.Fatalf("unexpected certificate: %+v", certs[0])
+	}
+}
+
 func TestParseDestinationCertificatesNormalizesAndFilters(t *testing.T) {
 	payload := []byte(`[
 		{"name":"a","certificate":"CERT-A","key":"KEY-A"},
@@ -73,5 +86,12 @@ func TestParseDestinationCertificatesNormalizesAndFilters(t *testing.T) {
 	}
 	if certs[1].Name != "b" || certs[1].Certificate != "CERT-B" || certs[1].Key != "KEY-B" {
 		t.Fatalf("unexpected second certificate: %+v", certs[1])
+	}
+}
+
+func TestParseDestinationCertificatesInvalidWrappedValue(t *testing.T) {
+	_, err := parseDestinationCertificates([]byte(`{"certificates":"invalid"}`))
+	if err == nil {
+		t.Fatal("expected an error for invalid wrapped certificate payload")
 	}
 }
