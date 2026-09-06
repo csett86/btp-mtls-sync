@@ -129,6 +129,9 @@ func run() error {
 
 func runDaemon(ctx context.Context, client *http.Client, cfg config) error {
 	log.Printf("daemon mode enabled: sync_interval=%s", cfg.SyncInterval)
+	ticker := time.NewTicker(cfg.SyncInterval)
+	defer ticker.Stop()
+
 	cycle := 0
 	for {
 		cycle++
@@ -143,7 +146,7 @@ func runDaemon(ctx context.Context, client *http.Client, cfg config) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(cfg.SyncInterval):
+		case <-ticker.C:
 		}
 	}
 }
