@@ -100,6 +100,57 @@ func TestLoadConfigRejectsNonPositiveSyncInterval(t *testing.T) {
 	}
 }
 
+func TestRunDaemonWaitsFullIntervalBetweenCycles(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg := config{RunMode: "daemon", SyncInterval: 40 * time.Millisecond}
+	calls := []time.Time{}
+	syncFn := func(context.Context, *http.Client, config) error {
+		calls = append(calls, time.Now())
+		if len(calls) >= 2 {
+			cancel()
+		}
+		return nil
+	}
+
+	err := runDaemonWithSyncFunc(ctx, &http.Client{}, cfg, syncFn)
+	if err != context.Canceled {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if len(calls) < 2 {
+		t.Fatalf("expected at least 2 cycles, got %d", len(calls))
+	}
+	gap := calls[1].Sub(calls[0])
+	if gap < 35*time.Millisecond {
+		t.Fatalf("expected full interval wait between cycles, got %s", gap)
+	}
+}
+
+func TestRunDaemonContinuesAfterFailedCycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg := config{RunMode: "daemon", SyncInterval: 10 * time.Millisecond}
+	callCount := 0
+	syncFn := func(context.Context, *http.Client, config) error {
+		callCount++
+		if callCount == 1 {
+			return io.EOF
+		}
+		cancel()
+		return nil
+	}
+
+	err := runDaemonWithSyncFunc(ctx, &http.Client{}, cfg, syncFn)
+	if err != context.Canceled {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if callCount < 2 {
+		t.Fatalf("expected daemon to continue after failed cycle, got %d calls", callCount)
+	}
+}
+
 func TestCertificateFingerprintStable(t *testing.T) {
 	cert := destinationCertificate{Name: "cert-a", Certificate: "CERTDATA", Key: "KEYDATA"}
 

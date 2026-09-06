@@ -128,26 +128,31 @@ func run() error {
 }
 
 func runDaemon(ctx context.Context, client *http.Client, cfg config) error {
+	return runDaemonWithSyncFunc(ctx, client, cfg, runSyncCycle)
+}
+
+func runDaemonWithSyncFunc(ctx context.Context, client *http.Client, cfg config, syncFn func(context.Context, *http.Client, config) error) error {
 	log.Printf("daemon mode enabled: sync_interval=%s", cfg.SyncInterval)
-	ticker := time.NewTicker(cfg.SyncInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 
 	cycle := 0
 	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer.C:
+		}
+
 		cycle++
 		started := time.Now()
 		log.Printf("daemon cycle %d started", cycle)
-		if err := runSyncCycle(ctx, client, cfg); err != nil {
+		if err := syncFn(ctx, client, cfg); err != nil {
 			log.Printf("daemon cycle %d failed: %v", cycle, err)
 		} else {
 			log.Printf("daemon cycle %d completed in %s", cycle, time.Since(started).Round(time.Millisecond))
 		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
+		timer.Reset(cfg.SyncInterval)
 	}
 }
 
