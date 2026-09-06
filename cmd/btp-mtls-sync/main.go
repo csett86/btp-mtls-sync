@@ -133,15 +133,10 @@ func runDaemon(ctx context.Context, client *http.Client, cfg config) error {
 
 func runDaemonWithSyncFunc(ctx context.Context, client *http.Client, cfg config, syncFn func(context.Context, *http.Client, config) error) error {
 	log.Printf("daemon mode enabled: sync_interval=%s", cfg.SyncInterval)
-	timer := time.NewTimer(0)
-	defer timer.Stop()
-
 	cycle := 0
 	for {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return ctx.Err()
-		case <-timer.C:
 		}
 
 		cycle++
@@ -155,7 +150,16 @@ func runDaemonWithSyncFunc(ctx context.Context, client *http.Client, cfg config,
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		timer.Reset(cfg.SyncInterval)
+
+		waitTimer := time.NewTimer(cfg.SyncInterval)
+		select {
+		case <-ctx.Done():
+			if !waitTimer.Stop() {
+				<-waitTimer.C
+			}
+			return ctx.Err()
+		case <-waitTimer.C:
+		}
 	}
 }
 
