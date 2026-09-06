@@ -35,6 +35,8 @@ type config struct {
 	CFDefaultServiceInstance string
 	NamePrefix               string
 	DryRun                   bool
+	RunMode                  string
+	SyncInterval             time.Duration
 }
 
 func normalizeTargetName(name string, prefix string) string {
@@ -115,6 +117,38 @@ func run() error {
 	ctx := context.Background()
 	client := &http.Client{Timeout: 30 * time.Second}
 
+	switch cfg.RunMode {
+	case "oneshot":
+		return runSyncCycle(ctx, client, cfg)
+	case "daemon":
+		return runDaemon(ctx, client, cfg)
+	default:
+		return fmt.Errorf("unsupported RUN_MODE %q", cfg.RunMode)
+	}
+}
+
+func runDaemon(ctx context.Context, client *http.Client, cfg config) error {
+	log.Printf("daemon mode enabled: sync_interval=%s", cfg.SyncInterval)
+	cycle := 0
+	for {
+		cycle++
+		started := time.Now()
+		log.Printf("daemon cycle %d started", cycle)
+		if err := runSyncCycle(ctx, client, cfg); err != nil {
+			log.Printf("daemon cycle %d failed: %v", cycle, err)
+		} else {
+			log.Printf("daemon cycle %d completed in %s", cycle, time.Since(started).Round(time.Millisecond))
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(cfg.SyncInterval):
+		}
+	}
+}
+
+func runSyncCycle(ctx context.Context, client *http.Client, cfg config) error {
 	destinationToken, err := fetchClientCredentialsToken(ctx, client, cfg.DestinationTokenURL, cfg.DestinationClientID, cfg.DestinationClientSecret)
 	if err != nil {
 		return fmt.Errorf("fetch destination token: %w", err)
@@ -156,6 +190,8 @@ func loadConfig() (config, error) {
 		CFClientSecret:           strings.TrimSpace(os.Getenv("CF_CLIENT_SECRET")),
 		CFDefaultServiceInstance: strings.TrimSpace(os.Getenv("CF_DEFAULT_SERVICE_INSTANCE_GUID")),
 		NamePrefix:               strings.TrimSpace(os.Getenv("SYNC_NAME_PREFIX")),
+		RunMode:                  "oneshot",
+		SyncInterval:             10 * time.Minute,
 	}
 
 	dryRunValue := strings.TrimSpace(os.Getenv("DRY_RUN"))
@@ -165,6 +201,28 @@ func loadConfig() (config, error) {
 			return config{}, fmt.Errorf("invalid DRY_RUN value %q: %w", dryRunValue, err)
 		}
 		cfg.DryRun = dryRun
+	}
+
+	runMode := strings.ToLower(strings.TrimSpace(os.Getenv("RUN_MODE")))
+	if runMode != "" {
+		switch runMode {
+		case "oneshot", "daemon":
+			cfg.RunMode = runMode
+		default:
+			return config{}, fmt.Errorf("invalid RUN_MODE value %q: must be oneshot or daemon", runMode)
+		}
+	}
+
+	syncIntervalValue := strings.TrimSpace(os.Getenv("SYNC_INTERVAL"))
+	if syncIntervalValue != "" {
+		syncInterval, err := time.ParseDuration(syncIntervalValue)
+		if err != nil {
+			return config{}, fmt.Errorf("invalid SYNC_INTERVAL value %q: %w", syncIntervalValue, err)
+		}
+		if syncInterval <= 0 {
+			return config{}, fmt.Errorf("invalid SYNC_INTERVAL value %q: must be greater than 0", syncIntervalValue)
+		}
+		cfg.SyncInterval = syncInterval
 	}
 
 	missing := []string{}
@@ -189,6 +247,9 @@ func loadConfig() (config, error) {
 	}
 	if len(missing) > 0 {
 		return config{}, fmt.Errorf("missing required env vars: %s", strings.Join(missing, ", "))
+	}
+	if cfg.RunMode == "daemon" && cfg.SyncInterval <= 0 {
+		return config{}, errors.New("SYNC_INTERVAL must be greater than 0 when RUN_MODE=daemon")
 	}
 
 	return cfg, nil
