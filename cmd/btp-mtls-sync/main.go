@@ -152,6 +152,9 @@ func runDaemonWithSyncFunc(ctx context.Context, client *http.Client, cfg config,
 		} else {
 			log.Printf("daemon cycle %d completed in %s", cycle, time.Since(started).Round(time.Millisecond))
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		timer.Reset(cfg.SyncInterval)
 	}
 }
