@@ -150,7 +150,11 @@ func runDaemonWithSyncFunc(ctx context.Context, client *http.Client, cfg config,
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err := waitForNextCycle(ctx, cfg.SyncInterval); err != nil {
+		waitDuration := cfg.SyncInterval - time.Since(started)
+		if waitDuration < 0 {
+			waitDuration = 0
+		}
+		if err := waitForNextCycle(ctx, waitDuration); err != nil {
 			return err
 		}
 	}

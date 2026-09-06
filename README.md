@@ -99,8 +99,8 @@ RUN_MODE=daemon SYNC_INTERVAL=10m go run ./cmd/btp-mtls-sync
 ## Operations guidance
 
 - `RUN_MODE=oneshot` runs one sync cycle and exits (good for ad-hoc/manual runs).
-- `RUN_MODE=daemon` runs one sync cycle immediately on startup, then starts each next cycle after waiting `SYNC_INTERVAL` from the previous cycle completion.
-- In daemon mode, a failed cycle is logged and the process still waits `SYNC_INTERVAL` before retrying.
+- `RUN_MODE=daemon` runs one sync cycle immediately on startup, then keeps cycle start times on the configured `SYNC_INTERVAL` cadence.
+- If a sync cycle fails, it is logged and retried on the next scheduled interval.
 - In dry-run mode (`DRY_RUN=true`), changes are logged but not applied.
 - Use CF logs to monitor cycle start/completion/failure and rely on CF restarts for process recovery.
 
