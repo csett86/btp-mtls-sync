@@ -30,11 +30,21 @@ Go service that syncs mTLS certificates from SAP BTP Destination Service to matc
 
 - `SYNC_NAME_PREFIX` - only sync certificate names that start with this prefix.
 - `DRY_RUN` - `true`/`false`.
+- `RUN_MODE` - `oneshot` (default) or `daemon`.
+- `SYNC_INTERVAL` - Go duration string (for example `10m`, `1h`, `30s`), used for daemon mode. Default: `10m`.
 
 ## Run
 
+One-shot (default):
+
 ```bash
 go run ./cmd/btp-mtls-sync
+```
+
+Repetitive local run (daemon mode):
+
+```bash
+RUN_MODE=daemon SYNC_INTERVAL=10m go run ./cmd/btp-mtls-sync
 ```
 
 ## Deploy to SAP BTP Cloud Foundry
@@ -67,14 +77,33 @@ go run ./cmd/btp-mtls-sync
    cf set-env btp-mtls-sync DRY_RUN true
    ```
 
-4. Push the app with the Go buildpack:
+4. Configure repetitive background execution as a worker:
 
    ```bash
-   cf push btp-mtls-sync -b go_buildpack
+   cf set-env btp-mtls-sync RUN_MODE daemon
+   cf set-env btp-mtls-sync SYNC_INTERVAL 10m
    ```
 
-5. Restage or restart after changing environment variables:
+5. Push the app with the Go buildpack as a no-route background process:
+
+   ```bash
+   cf push btp-mtls-sync -b go_buildpack --no-route --health-check-type process
+   ```
+
+6. Restage or restart after changing environment variables:
 
    ```bash
    cf restart btp-mtls-sync
    ```
+
+## Operations guidance
+
+- `RUN_MODE=oneshot` runs one sync cycle and exits (good for ad-hoc/manual runs).
+- `RUN_MODE=daemon` runs one sync cycle immediately on startup, then keeps cycle start times on the configured `SYNC_INTERVAL` cadence.
+- If a sync cycle fails, it is logged and retried on the next scheduled interval.
+- In dry-run mode (`DRY_RUN=true`), changes are logged but not applied.
+- Use CF logs to monitor cycle start/completion/failure and rely on CF restarts for process recovery.
+
+## Future extension: SAP Job Scheduler
+
+For strict cron-based windows and centralized schedule governance, add SAP Job Scheduler integration in a later phase. This repository now supports the simpler worker-based repetitive mode first.

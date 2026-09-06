@@ -12,6 +12,145 @@ import (
 	"time"
 )
 
+func setRequiredEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("DESTINATION_TOKEN_URL", "https://dest.example.com/oauth/token")
+	t.Setenv("DESTINATION_CLIENT_ID", "dest-client")
+	t.Setenv("DESTINATION_CLIENT_SECRET", "dest-secret")
+	t.Setenv("DESTINATION_API_URL", "https://dest.example.com")
+	t.Setenv("CF_TOKEN_URL", "https://cf.example.com/oauth/token")
+	t.Setenv("CF_CLIENT_ID", "cf-client")
+	t.Setenv("CF_CLIENT_SECRET", "cf-secret")
+	t.Setenv("CF_API_URL", "https://api.cf.example.com")
+	t.Setenv("CF_DEFAULT_SERVICE_INSTANCE_GUID", "instance-guid")
+}
+
+func TestLoadConfigDefaultsRunModeAndInterval(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RUN_MODE", "")
+	t.Setenv("SYNC_INTERVAL", "")
+	t.Setenv("DRY_RUN", "")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.RunMode != "oneshot" {
+		t.Fatalf("expected default run mode oneshot, got %q", cfg.RunMode)
+	}
+	if cfg.SyncInterval != 10*time.Minute {
+		t.Fatalf("expected default sync interval 10m, got %s", cfg.SyncInterval)
+	}
+}
+
+func TestLoadConfigParsesDaemonModeAndInterval(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RUN_MODE", "daemon")
+	t.Setenv("SYNC_INTERVAL", "45s")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if cfg.RunMode != "daemon" {
+		t.Fatalf("expected daemon run mode, got %q", cfg.RunMode)
+	}
+	if cfg.SyncInterval != 45*time.Second {
+		t.Fatalf("expected sync interval 45s, got %s", cfg.SyncInterval)
+	}
+}
+
+func TestLoadConfigRejectsInvalidRunMode(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RUN_MODE", "cron")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected invalid RUN_MODE error")
+	}
+	if !strings.Contains(err.Error(), "invalid RUN_MODE value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsInvalidSyncInterval(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("SYNC_INTERVAL", "ten-minutes")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected invalid SYNC_INTERVAL error")
+	}
+	if !strings.Contains(err.Error(), "invalid SYNC_INTERVAL value") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadConfigRejectsNonPositiveSyncInterval(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RUN_MODE", "daemon")
+	t.Setenv("SYNC_INTERVAL", "0s")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatal("expected non-positive SYNC_INTERVAL error")
+	}
+	if !strings.Contains(err.Error(), "must be greater than 0") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRunDaemonWaitsFullIntervalBetweenCycles(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg := config{RunMode: "daemon", SyncInterval: 40 * time.Millisecond}
+	calls := []time.Time{}
+	syncFn := func(context.Context, *http.Client, config) error {
+		calls = append(calls, time.Now())
+		if len(calls) >= 2 {
+			cancel()
+		}
+		return nil
+	}
+
+	err := runDaemonWithSyncFunc(ctx, &http.Client{}, cfg, syncFn)
+	if err != context.Canceled {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if len(calls) < 2 {
+		t.Fatalf("expected at least 2 cycles, got %d", len(calls))
+	}
+	gap := calls[1].Sub(calls[0])
+	if gap < 35*time.Millisecond {
+		t.Fatalf("expected full interval wait between cycles, got %s", gap)
+	}
+}
+
+func TestRunDaemonContinuesAfterFailedCycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	cfg := config{RunMode: "daemon", SyncInterval: 10 * time.Millisecond}
+	callCount := 0
+	syncFn := func(context.Context, *http.Client, config) error {
+		callCount++
+		if callCount == 1 {
+			return io.EOF
+		}
+		cancel()
+		return nil
+	}
+
+	err := runDaemonWithSyncFunc(ctx, &http.Client{}, cfg, syncFn)
+	if err != context.Canceled {
+		t.Fatalf("expected context canceled, got %v", err)
+	}
+	if callCount < 2 {
+		t.Fatalf("expected daemon to continue after failed cycle, got %d calls", callCount)
+	}
+}
+
 func TestCertificateFingerprintStable(t *testing.T) {
 	cert := destinationCertificate{Name: "cert-a", Certificate: "CERTDATA", Key: "KEYDATA"}
 
