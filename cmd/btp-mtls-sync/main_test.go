@@ -245,6 +245,38 @@ func TestParseDestinationCertificatesInvalidWrappedValue(t *testing.T) {
 	}
 }
 
+func TestListCFServiceKeysRestrictsToConfiguredServiceInstance(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v3/service_credential_bindings" {
+			http.NotFound(w, r)
+			return
+		}
+		if got := r.URL.Query().Get("type"); got != "key" {
+			t.Fatalf("expected type=key, got %q", got)
+		}
+		if got := r.URL.Query().Get("service_instance_guids"); got != "instance-guid" {
+			t.Fatalf("expected service_instance_guids=instance-guid, got %q", got)
+		}
+		if got := r.URL.Query().Get("per_page"); got != "5000" {
+			t.Fatalf("expected per_page=5000, got %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"resources":[{"guid":"binding-guid","name":"key-a","relationships":{"service_instance":{"data":{"guid":"instance-guid"}}}}],"pagination":{}}`))
+	}))
+	defer server.Close()
+
+	keys, err := listCFServiceKeys(context.Background(), server.Client(), server.URL, "token", "instance-guid")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+	if keys[0].GUID != "binding-guid" {
+		t.Fatalf("expected binding-guid, got %q", keys[0].GUID)
+	}
+}
+
 func TestSyncCertificatesDetectsTargetNameCollisionAfterPrefixTrim(t *testing.T) {
 	cfg := config{
 		CFDefaultServiceInstance: "service-instance-guid",

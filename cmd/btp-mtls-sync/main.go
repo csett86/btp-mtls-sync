@@ -188,7 +188,7 @@ func runSyncCycle(ctx context.Context, client *http.Client, cfg config) error {
 		return fmt.Errorf("list destination certificates: %w", err)
 	}
 
-	serviceKeys, err := listCFServiceKeys(ctx, client, cfg.CFAPIURL, cfToken)
+	serviceKeys, err := listCFServiceKeys(ctx, client, cfg.CFAPIURL, cfToken, cfg.CFDefaultServiceInstance)
 	if err != nil {
 		return fmt.Errorf("list cf service keys: %w", err)
 	}
@@ -387,8 +387,12 @@ func getFirstString(data map[string]any, keys ...string) string {
 	return ""
 }
 
-func listCFServiceKeys(ctx context.Context, client *http.Client, apiURL, token string) ([]cfServiceKeyResource, error) {
-	nextURL := apiURL + "/v3/service_credential_bindings?type=key&per_page=5000"
+func listCFServiceKeys(ctx context.Context, client *http.Client, apiURL, token string, serviceInstanceGUID string) ([]cfServiceKeyResource, error) {
+	params := url.Values{}
+	params.Set("type", "key")
+	params.Set("service_instance_guids", serviceInstanceGUID)
+	params.Set("per_page", "5000")
+	nextURL := apiURL + "/v3/service_credential_bindings?" + params.Encode()
 	all := []cfServiceKeyResource{}
 
 	for nextURL != "" {
